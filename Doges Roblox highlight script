@@ -1,0 +1,31 @@
+-- Highlight all players' characters
+local Players = game:GetService("Players")
+
+-- Function to add highlight to a character
+local function addHighlight(character)
+    if character and not character:FindFirstChildOfClass("Highlight") then
+        local highlight = Instance.new("Highlight")
+        highlight.Adornee = character
+        highlight.FillColor = Color3.new(1, 0, 0) -- Red highlight fill
+        highlight.OutlineColor = Color3.new(1, 1, 1) -- White outline
+        highlight.Parent = character
+    end
+end
+
+-- Add highlight when a player spawns their character
+local function onCharacterAdded(character)
+    addHighlight(character)
+end
+
+-- Add highlight for all players currently in the game
+for _, player in pairs(Players:GetPlayers()) do
+    if player.Character then
+        addHighlight(player.Character)
+    end
+    player.CharacterAdded:Connect(onCharacterAdded)
+end
+
+-- Listen for new players joining
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(onCharacterAdded)
+end)
