@@ -1,12 +1,323 @@
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 320, 0, 40)
-title.Position = UDim2.new(0, 5, 0, -40)
-title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-title.TextColor3 = Color3.new(1, 1, 1)
-title.Text = "Doge's Mod Menu Only"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 24
-title.BorderSizePixel = 0
-title.TextStrokeTransparency = 0.7
-title.TextScaled = false
-title.Parent = screenGui
+-- Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- GUI Setup
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AbilityGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local function createButton(text, position)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 150, 0, 35)
+    btn.Position = position
+    btn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Text = text
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 18
+    btn.BorderSizePixel = 0
+    btn.AutoButtonColor = true
+    btn.Parent = screenGui
+    return btn
+end
+
+local flyToggle = false
+local speedToggle = false
+local jumpToggle = false
+local invisToggle = false
+local platformToggle = false
+local followToggle = false
+
+-- Invisible Platform
+local invisiblePlatform = nil
+
+-- Variables for fly
+local flySpeed = 50
+local flyVelocity = nil
+
+-- Speed and Jump boost values
+local normalWalkSpeed = 16
+local boostedWalkSpeed = 50
+local normalJumpPower = 50
+local boostedJumpPower = 150
+
+-- Follow Player
+local selectedFollowPlayer = nil
+local followConnection = nil
+
+-- Dropdown for selecting player to follow
+local dropdown = Instance.new("TextButton")
+dropdown.Size = UDim2.new(0, 150, 0, 35)
+dropdown.Position = UDim2.new(0, 160, 0, 5)
+dropdown.BackgroundColor3 = Color3.fromRGB(30,30,30)
+dropdown.TextColor3 = Color3.new(1,1,1)
+dropdown.Text = "Follow Player ▼"
+dropdown.Font = Enum.Font.SourceSansBold
+dropdown.TextSize = 18
+dropdown.BorderSizePixel = 0
+dropdown.Parent = screenGui
+
+local dropdownFrame = Instance.new("Frame")
+dropdownFrame.Size = UDim2.new(0, 150, 0, 0)
+dropdownFrame.Position = UDim2.new(0, 0, 1, 0)
+dropdownFrame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+dropdownFrame.BorderSizePixel = 0
+dropdownFrame.ClipsDescendants = true
+dropdownFrame.Parent = dropdown
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = dropdownFrame
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function refreshPlayerList()
+    -- Clear old entries
+    for _, child in pairs(dropdownFrame:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, 0, 0, 25)
+            btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+            btn.TextColor3 = Color3.new(1,1,1)
+            btn.Text = plr.Name
+            btn.Font = Enum.Font.SourceSans
+            btn.TextSize = 16
+            btn.BorderSizePixel = 0
+            btn.Parent = dropdownFrame
+
+            btn.MouseButton1Click:Connect(function()
+                selectedFollowPlayer = plr
+                dropdown.Text = "Follow: "..plr.Name.." ▼"
+                dropdownFrame:TweenSize(UDim2.new(0,150,0,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+                followToggle = true
+            end)
+        end
+    end
+end
+
+dropdown.MouseButton1Click:Connect(function()
+    if dropdownFrame.Size.Y.Offset == 0 then
+        refreshPlayerList()
+        dropdownFrame:TweenSize(UDim2.new(0,150,0,100), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+    else
+        dropdownFrame:TweenSize(UDim2.new(0,150,0,0), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.3, true)
+    end
+end)
+
+-- Buttons
+local flyBtn = createButton("Toggle Fly", UDim2.new(0, 5, 0, 5))
+local speedBtn = createButton("Toggle Speed Boost", UDim2.new(0, 5, 0, 45))
+local jumpBtn = createButton("Toggle Jump Boost", UDim2.new(0, 5, 0, 85))
+local resetBtn = createButton("Reset Character", UDim2.new(0, 5, 0, 125))
+local invisBtn = createButton("Toggle Invisibility", UDim2.new(0, 5, 0, 165))
+local platformBtn = createButton("Toggle Invisible Platform", UDim2.new(0, 5, 0, 205))
+
+-- Fly logic
+local flyingConnection = nil
+
+local function stopFly()
+    flyingConnection:Disconnect()
+    flyingConnection = nil
+    flyVelocity = nil
+end
+
+local function startFly()
+    flyVelocity = Instance.new("BodyVelocity")
+    flyVelocity.MaxForce = Vector3.new(1e5,1e5,1e5)
+    flyVelocity.Velocity = Vector3.new(0,0,0)
+    flyVelocity.Parent = rootPart
+
+    flyingConnection = RunService.Heartbeat:Connect(function()
+        local moveDir = Vector3.new()
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + workspace.CurrentCamera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - workspace.CurrentCamera.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - workspace.CurrentCamera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + workspace.CurrentCamera.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0,1,0) end
+
+        flyVelocity.Velocity = moveDir.Unit * flySpeed
+        if moveDir.Magnitude == 0 then
+            flyVelocity.Velocity = Vector3.new(0,0,0)
+        end
+    end)
+end
+
+flyBtn.MouseButton1Click:Connect(function()
+    flyToggle = not flyToggle
+    if flyToggle then
+        humanoid.PlatformStand = true
+        startFly()
+        flyBtn.Text = "Disable Fly"
+    else
+        humanoid.PlatformStand = false
+        if flyingConnection then
+            stopFly()
+        end
+        if flyVelocity then
+            flyVelocity:Destroy()
+            flyVelocity = nil
+        end
+        flyBtn.Text = "Toggle Fly"
+    end
+end)
+
+-- Speed boost logic
+speedBtn.MouseButton1Click:Connect(function()
+    speedToggle = not speedToggle
+    if speedToggle then
+        humanoid.WalkSpeed = boostedWalkSpeed
+        speedBtn.Text = "Disable Speed Boost"
+    else
+        humanoid.WalkSpeed = normalWalkSpeed
+        speedBtn.Text = "Toggle Speed Boost"
+    end
+end)
+
+-- Jump boost logic
+jumpBtn.MouseButton1Click:Connect(function()
+    jumpToggle = not jumpToggle
+    if jumpToggle then
+        humanoid.JumpPower = boostedJumpPower
+        jumpBtn.Text = "Disable Jump Boost"
+    else
+        humanoid.JumpPower = normalJumpPower
+        jumpBtn.Text = "Toggle Jump Boost"
+    end
+end)
+
+-- Reset character logic
+resetBtn.MouseButton1Click:Connect(function()
+    player.Character:BreakJoints()
+end)
+
+-- Invisibility logic
+invisBtn.MouseButton1Click:Connect(function()
+    invisToggle = not invisToggle
+    local char = player.Character
+    if not char then return end
+    for _, part in pairs(char:GetChildren()) do
+        if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
+            part.Transparency = invisToggle and 1 or 0
+        end
+        if part:IsA("Decal") then
+            part.Transparency = invisToggle and 1 or 0
+        end
+    end
+    -- Also hide accessories
+    for _, acc in pairs(char:GetChildren()) do
+        if acc:IsA("Accessory") then
+            if acc.Handle then
+                acc.Handle.Transparency = invisToggle and 1 or 0
+            end
+        end
+    end
+    invisBtn.Text = invisToggle and "Disable Invisibility" or "Toggle Invisibility"
+end)
+
+-- Invisible platform logic
+platformBtn.MouseButton1Click:Connect(function()
+    platformToggle = not platformToggle
+    if platformToggle then
+        if not invisiblePlatform then
+            invisiblePlatform = Instance.new("Part")
+            invisiblePlatform.Size = Vector3.new(10, 1, 10)
+            invisiblePlatform.Anchored = true
+            invisiblePlatform.CanCollide = true
+            invisiblePlatform.Transparency = 1
+            invisiblePlatform.Position = rootPart.Position - Vector3.new(0, 3, 0)
+            invisiblePlatform.Parent = workspace
+        end
+        platformBtn.Text = "Disable Invisible Platform"
+
+        -- Update platform position on heartbeat
+        invisiblePlatformConnection = RunService.Heartbeat:Connect(function()
+            if invisiblePlatform and rootPart then
+                invisiblePlatform.Position = rootPart.Position - Vector3.new(0, 3, 0)
+            end
+        end)
+    else
+        platformBtn.Text = "Toggle Invisible Platform"
+        if invisiblePlatformConnection then
+            invisiblePlatformConnection:Disconnect()
+            invisiblePlatformConnection = nil
+        end
+        if invisiblePlatform then
+            invisiblePlatform:Destroy()
+            invisiblePlatform = nil
+        end
+    end
+end)
+
+-- Follow player logic
+local function stopFollow()
+    if followConnection then
+        followConnection:Disconnect()
+        followConnection = nil
+    end
+end
+
+local function startFollow(targetPlayer)
+    stopFollow()
+    if not targetPlayer or not targetPlayer.Character or not targetPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    followConnection = RunService.Heartbeat:Connect(function()
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+        if not targetPlayer.Character or not targetPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+        local targetPos = targetPlayer.Character.HumanoidRootPart.Position
+        local root = player.Character.HumanoidRootPart
+
+        -- Simple follow by moving player's HumanoidRootPart near target player with a small offset
+        local offset = Vector3.new(3, 0, 3)
+        local newPos = targetPos + offset
+
+        root.CFrame = CFrame.new(newPos)
+    end)
+end
+
+RunService.Heartbeat:Connect(function()
+    if followToggle and selectedFollowPlayer then
+        if selectedFollowPlayer.Character and selectedFollowPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            startFollow(selectedFollowPlayer)
+        else
+            stopFollow()
+        end
+    else
+        stopFollow()
+    end
+end)
+
+-- Clean up on character respawn
+player.CharacterAdded:Connect(function(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+
+    -- Reset stats
+    humanoid.WalkSpeed = normalWalkSpeed
+    humanoid.JumpPower = normalJumpPower
+    humanoid.PlatformStand = false
+
+    -- Remove invisibility on new character
+    invisToggle = false
+    invisBtn.Text = "Toggle Invisibility"
+
+    -- Remove fly if enabled
+    if flyToggle then
+        humanoid.PlatformStand = true
+        startFly()
+    end
+end)
